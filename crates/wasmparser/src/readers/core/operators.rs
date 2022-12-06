@@ -33,6 +33,12 @@ pub enum BlockType {
 pub struct MemArg {
     /// Alignment, stored as `n` where the actual alignment is `2^n`
     pub align: u8,
+    /// Maximum alignment, stored as `n` where the actual alignment is `2^n`.
+    ///
+    /// Note that this field is not actually read from the binary format, it
+    /// will be a constant depending on which instruction this `MemArg` is a
+    /// payload for.
+    pub max_align: u8,
     /// A fixed byte-offset that this memory immediate specifies.
     ///
     /// Note that the memory64 proposal can specify a full 64-bit byte offset
@@ -192,11 +198,10 @@ impl<'a> OperatorsReader<'a> {
         Ok((self.read()?, pos))
     }
 
-    /// Visits an operator with its offset.
-    pub fn visit_with_offset<T>(
-        &mut self,
-        visitor: &mut T,
-    ) -> Result<<T as VisitOperator<'a>>::Output>
+    /// Visit a single operator with the specified [`VisitOperator`] instance.
+    ///
+    /// See [`BinaryReader::visit_operator`] for more information.
+    pub fn visit_operator<T>(&mut self, visitor: &mut T) -> Result<<T as VisitOperator<'a>>::Output>
     where
         T: VisitOperator<'a>,
     {
@@ -220,9 +225,9 @@ impl<'a> IntoIterator for OperatorsReader<'a> {
     /// use wasmparser::{Operator, CodeSectionReader, Result};
     /// # let data: &[u8] = &[
     /// #     0x01, 0x03, 0x00, 0x01, 0x0b];
-    /// let mut code_reader = CodeSectionReader::new(data, 0).unwrap();
-    /// for _ in 0..code_reader.get_count() {
-    ///     let body = code_reader.read().expect("function body");
+    /// let code_reader = CodeSectionReader::new(data, 0).unwrap();
+    /// for body in code_reader {
+    ///     let body = body.expect("function body");
     ///     let mut op_reader = body.get_operators_reader().expect("op reader");
     ///     let ops = op_reader.into_iter().collect::<Result<Vec<Operator>>>().expect("ops");
     ///     assert!(
@@ -275,9 +280,9 @@ impl<'a> Iterator for OperatorsIteratorWithOffsets<'a> {
     /// use wasmparser::{Operator, CodeSectionReader, Result};
     /// # let data: &[u8] = &[
     /// #     0x01, 0x03, 0x00, /* offset = 23 */ 0x01, 0x0b];
-    /// let mut code_reader = CodeSectionReader::new(data, 20).unwrap();
-    /// for _ in 0..code_reader.get_count() {
-    ///     let body = code_reader.read().expect("function body");
+    /// let code_reader = CodeSectionReader::new(data, 20).unwrap();
+    /// for body in code_reader {
+    ///     let body = body.expect("function body");
     ///     let mut op_reader = body.get_operators_reader().expect("op reader");
     ///     let ops = op_reader.into_iter_with_offsets().collect::<Result<Vec<(Operator, usize)>>>().expect("ops");
     ///     assert!(
@@ -300,7 +305,7 @@ impl<'a> Iterator for OperatorsIteratorWithOffsets<'a> {
 macro_rules! define_visit_operator {
     ($(@$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident)*) => {
         $(
-            fn $visit(&mut self, offset: usize $($(,$arg: $argty)*)?) -> Self::Output;
+            fn $visit(&mut self $($(,$arg: $argty)*)?) -> Self::Output;
         )*
     }
 }
@@ -319,12 +324,12 @@ pub trait VisitOperator<'a> {
     /// critical use cases. For performance critical implementations users
     /// are recommended to directly use the respective `visit` methods or
     /// implement [`VisitOperator`] on their own.
-    fn visit_operator(&mut self, offset: usize, op: &Operator<'a>) -> Self::Output {
+    fn visit_operator(&mut self, op: &Operator<'a>) -> Self::Output {
         macro_rules! visit_operator {
             ($(@$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident)*) => {
                 match op {
                     $(
-                        Operator::$op $({ $($arg),* })? => self.$visit(offset, $($($arg.clone()),*)?),
+                        Operator::$op $({ $($arg),* })? => self.$visit($($($arg.clone()),*)?),
                     )*
                 }
             }
